@@ -1,0 +1,200 @@
+---
+title: "RepResearchProj2"
+author: "Taylor Van Anne"
+date: "January 18, 2016"
+output: html_document
+---
+
+###About this document
+This document is about analyzing events to determine which are the most dangerous in terms of human health (fatalities and injuries) as well as which are the most economically destructive (cause the highest property damage).  
+Events with highest average annual count of injuries -- Tornado, Flood, Excessive Heat, Lightning, Hurricane (Typhoon)  
+Events with highest average annual count of fatalities -- Excessive Heat, Tornado, Heat, Flash Flood, Lightning  
+Events with highest average annual amount of property damage caused -- Hurricane (Typhoon), Flood, Storm Surge/Tide, Flash Flood, Tornado  
+
+
+##Data Processing
+If an event type was captured for a certain year, I assume that that particular event type was captured for the entire year. Since not all event types were captured for all years, my strategy was to 1) group the data into event/year pairs and find the sum of the fatalities and injuries for those pairs. 2) group that data by event only, then take the average of the sums for fatalities and injuries (which collapses the yearly data).
+
+These are the libraries used for the below processing.
+```{r}
+    library(dplyr)
+    library(ggplot2)
+    library(reshape)
+    library(lubridate)
+    library(stringdist)
+```
+
+1) Load the dataset:
+```{r cache=TRUE}
+rawdata <- read.csv("../data/repdata-data-StormData.csv.bz2", stringsAsFactors=FALSE)
+```
+
+2) Create date values using the lubridate package. Also, split one into year.
+```{r cache=TRUE}
+#Make some real date fields, then take a sample of data
+    rawdata$DATE <- parse_date_time(rawdata$BGN_DATE, orders = "mdy hms") 
+    rawdata$YEAR <- year(rawdata$DATE)
+```
+
+3) Clean the EVTYPE field. There are 47 real event types that these should all fall into.
+```{r cache=TRUE}
+#clean EVTYPE
+    clean_EVTYPEs <- read.csv("clean_EVTYPEs.csv", stringsAsFactors = FALSE)
+    clean_EVTYPEs <- toupper(clean_EVTYPEs$Clean_EVTYPEs)
+    dirty_EVTYPEs <- rawdata$EVTYPE
+    EVTYPE_Indeces <- amatch(dirty_EVTYPEs, clean_EVTYPEs, maxDist=23)
+    clean_Events <- clean_EVTYPEs[EVTYPE_Indeces]
+    rawdata$Clean_Event <- clean_Events
+    rawdata_clean_nas <- filter(rawdata, is.na(Clean_Event))
+    testrawdata <- as.data.frame(rawdata$EVTYPE); testrawdata$clean <- rawdata$Clean_Event    
+```
+
+
+4) Group the data by the newly created Event type field as well as Year. 
+```{r cache=TRUE}
+    rawdata$EVTYPE <- as.factor(rawdata$EVTYPE)
+    
+    #group by event type and year
+    rawdata.evt.grp <- group_by(rawdata, Clean_Event, YEAR)  #this can be used for both Q1 and Q2
+    rawdata.evt.summ <- summarize(rawdata.evt.grp, 'sum_fatalities'=sum(FATALITIES, na.rm = TRUE), 
+                                   'sum_injuries'=sum(INJURIES, na.rm = TRUE))
+```
+
+
+5) Take the resulting data set, turn it into a data frame, then group by only the event type. Finally, take the average of the fatalities and injuries per year. This will collapse the year field.
+```{r cache=TRUE}
+    rawdata.evt.summ <- as.data.frame(rawdata.evt.summ)
+    #now group ONLY by event type
+    rawdata.evt.summ.grp <- group_by(rawdata.evt.summ, Clean_Event)
+    
+    #this will collapse the sums for each year into averages across all years
+    rawdata.avg <- summarize(rawdata.evt.summ.grp, 'avg_fatalities'=mean(sum_fatalities), 
+                             'avg_injuries'=mean(sum_injuries))
+```
+
+
+6) Filter the resulting dataset to records with more than 10 fatalities and then arrange in order of most to least average annual fatalities.
+```{r cache=TRUE}
+    #highest fatalities
+    rawdata.avg.flt <- filter(rawdata.avg, avg_fatalities > 10)
+    topFatalities <- arrange(rawdata.avg.flt, desc(avg_fatalities))
+    topFatalities
+    
+    top5FatalEvt <- topFatalities[1:5, ]
+    colnames(top5FatalEvt) <- c("Event_Type", "Avg_Fatalities_per_Year", "Avg_Injuries_per_Year")
+```
+    
+   
+7) Conduct the same steps but for highest injuries.
+```{r cache=TRUE}
+    #highest injuries
+    rawdata.avg.flt2 <- filter(rawdata.avg, avg_injuries > 10)
+    topInjuries <- arrange(rawdata.avg.flt2, desc(avg_injuries))
+    topInjuries
+    top5InjuryEvt <- topInjuries[1:5, ]
+    top5InjuryEvt
+    colnames(top5InjuryEvt) <- c("Event_Type", "Avg_Fatalities_per_Year", "Avg_Injuries_per_Year")
+```
+    
+    
+8) Filter for records that only have a clean value in the PROPDMGEXP field (Thousands, Millions, Billions).
+```{r cache=TRUE}
+    #We only care about these fields really
+    rawdata$PROPDMGEXP <- toupper(rawdata$PROPDMGEXP) 
+    rawdata.flt <- filter(rawdata, PROPDMGEXP == "K" | PROPDMGEXP == "B" | PROPDMGEXP == "M")
+```
+
+9) Multiply the property damage value by the multiplier K, M, or B (Thousands, Millions, Billions).
+```{r cache=TRUE}
+     rawdata.flt$PropertyDamage <- 0
+    for (i in 1:nrow(rawdata.flt)) {
+        if (rawdata.flt$PROPDMGEXP[i] == "K") {
+            rawdata.flt$PropertyDamage[i] <- rawdata.flt$PROPDMG[i] * 1000
+        } else if (rawdata.flt$PROPDMGEXP[i] == "M") {
+            rawdata.flt$PropertyDamage[i] <- rawdata.flt$PROPDMG[i] * 1000000
+        } else if (rawdata.flt$PROPDMGEXP[i] == "B") {
+            rawdata.flt$PropertyDamage[i] <- rawdata.flt$PROPDMG[i] * 1000000000
+        } 
+    }
+    
+```
+
+10) Group raw dataset by Event Type and Year (again) and sum the property damage:
+```{r cache=TRUE}
+    rawdata.flt.grpby <- group_by(rawdata.flt, Clean_Event, YEAR)
+    rawdata.flt.summ <- summarize(rawdata.flt.grpby, 'sum_propertydmg'=sum(PropertyDamage)) 
+```
+
+11) Convert the resulting dataset 
+```{r cache=TRUE}
+    rawdata.flt.summ <- as.data.frame(rawdata.flt.summ)
+    rawdata.flt.grpby2 <- group_by(rawdata.flt.summ, Clean_Event)
+    rawdata.flt.summ2 <- summarize(rawdata.flt.grpby2, 'avg_propertydmg'=mean(sum_propertydmg))
+    rawdata.flt.summ2.arrg <- arrange(rawdata.flt.summ2, desc(avg_propertydmg))
+    
+    top5PropertyDmg <- rawdata.flt.summ2.arrg[1:5, ]
+    top5PropertyDmg <- as.data.frame(top5PropertyDmg) 
+```
+
+
+12) Create real currency-looking values based on the total average property damage per year value from the previously created dataset.
+```{r cache=TRUE}
+   for (i in 1:nrow(top5PropertyDmg)) {
+        top5PropertyDmg$Dollar[i] <- paste("$",format(top5PropertyDmg[i,2], big.mark=","),sep="")  
+    } 
+```
+
+
+##Results
+Results for highest Injuries:
+```{r}
+    top5InjuryEvt
+    
+    ggplot(top5InjuryEvt, aes(x = reorder(Event_Type, -Avg_Injuries_per_Year), y = Avg_Injuries_per_Year)) + 
+        geom_bar(stat = "identity") +
+        xlab("Event Type") +
+        ylab("Average Injuries per Year") +
+        ggtitle("Event Types with Most Injuries") +
+        geom_text(aes(label = Avg_Injuries_per_Year), vjust = -0.5) 
+    
+```  
+  
+Tornados cause the most injuries on average per year.
+  
+  
+  
+Results for highest Fatalities:
+```{r}
+    top5FatalEvt
+    
+    ggplot(top5FatalEvt, aes(x = reorder(Event_Type, -Avg_Fatalities_per_Year), 
+                             y = Avg_Fatalities_per_Year)) + 
+        geom_bar(stat = "identity") +
+        xlab("Event Type") +
+        ylab("Average Fatalities per Year") +
+        ggtitle("Event Types with Most Fatalities") +
+        geom_text(aes(label = Avg_Fatalities_per_Year), vjust = -0.5)
+    
+```  
+  
+Excessive heat causes the most fatalities on average per year.
+  
+    
+      
+Results for highest Property Damage:
+```{r}
+   top5PropertyDmg
+    
+    ggplot(top5PropertyDmg, aes(x = reorder(Clean_Event, -avg_propertydmg), y = avg_propertydmg)) + 
+        geom_bar(stat = "identity") +
+        xlab("Event Type") +
+        ylab("Average Property Damage per Year") +
+        ggtitle("Event Types with the Highest Average Annual Property Damage") +
+        geom_text(aes(label = Dollar), vjust = -0.5) 
+```  
+
+Hurricanes (Typhoons) cause the most property damage on average per year.  
+
+
+
+
